@@ -1,0 +1,4 @@
+
+development:
+    driver: mysql
+    open: root:password@tcp(172.17.0.3:3306)/enjin
