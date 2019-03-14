@@ -157,38 +157,70 @@ func RunMigrationsOnDb(conf *DBConf, migrationsDir string, target int64, db *sql
 	fmt.Println(current)
 
 	migrations, err := CollectMigrations(migrationsDir, current, target)
-	fmt.Println(migrations);
+	fmt.Println(current);
 	fmt.Println(err);
 	if err != nil {
 		return err
 	}
 
 
-	// if len(migrations) == 0 {
-	// 	fmt.Printf("goose: no migrations to run. current version: %d\n", current)
-	// 	return nil
-	// }
+	if len(migrations) == 0 {
+		fmt.Printf("goose: no migrations to run. current version: %d\n", current)
+		return nil
+	}
 
 	// ms := migrationSorter(migrations)
-	// direction := current < target
+	direction := false
 	// ms.Sort(direction)
+	ms := migrations
+	fmt.Printf("goose: migrating db environment '%v', current version: %d, target: %d\n",
+		conf.Env, current, target)
 
-	// fmt.Printf("goose: migrating db environment '%v', current version: %d, target: %d\n",
-	// 	conf.Env, current, target)
+	for _, m := range ms {
 
-	// for _, m := range ms {
+		switch filepath.Ext(m.Source) {
+		case ".sql":
+			err = runSQLMigration(conf, db, m.Source, m.Version, direction)
+		}
 
-	// 	switch filepath.Ext(m.Source) {
-	// 	case ".sql":
-	// 		// err = runSQLMigration(conf, db, m.Source, m.Version, direction)
-	// 	}
+		if err != nil {
+			return errors.New(fmt.Sprintf("FAIL %v, quitting migration", err))
+		}
 
-	// 	if err != nil {
-	// 		return errors.New(fmt.Sprintf("FAIL %v, quitting migration", err))
-	// 	}
+		fmt.Println("OK   ", filepath.Base(m.Source))
+	}
 
-	// 	fmt.Println("OK   ", filepath.Base(m.Source))
-	// }
+	return nil
+}
+
+func runSQLMigration(conf *DBConf, db *sql.DB, scriptFile string, v int64, direction bool) error {
+
+	txn, err := db.Begin()
+	if err != nil {
+		log.Fatal("db.Begin:", err)
+	}
+
+	f, err := os.Open(scriptFile)
+	if err != nil {
+		log.Fatal(err)
+	}
+
+	// find each statement, checking annotations for up/down direction
+	// and execute each of them in the current transaction.
+	// Commits the transaction if successfully applied each statement and
+	// records the version into the version table or returns an error and
+	// rolls back the transaction.
+	for _, query := range splitSQLStatements(f, direction) {
+		if _, err = txn.Exec(query); err != nil {
+			txn.Rollback()
+			log.Fatalf("FAIL %s (%v), quitting migration.", filepath.Base(scriptFile), err)
+			return err
+		}
+	}
+
+	if err = FinalizeMigration(conf, txn, direction, v); err != nil {
+		log.Fatalf("error finalizing migration %s, quitting. (%v)", filepath.Base(scriptFile), err)
+	}
 
 	return nil
 }
@@ -211,10 +243,10 @@ func NumericComponent(name string) (int64, error) {
 		return 0, errors.New("IDは0以上を使用してください。")
 	}
 
-	n, err := time.Parse(RFC3339, n)
-    if err == nil {
-        return 0, errors.New("日付形式で入力してください。")
-    }
+	// n, err := time.Parse(RFC3339, n)
+    // if err == nil {
+    //     return 0, errors.New("日付形式で入力してください。")
+    // }
 
 	return n, e
 }
@@ -234,13 +266,17 @@ func CollectMigrations(dirpath string, current, target int64) (m []*Migration, e
 			}
 			
 			if versionFilter(v, current, target) {
-				// m = append(m, newMigration(v, name))
+				m = append(m, newMigration(v, name))
 			}
 		}
 		return nil
 	})
 
 	return m, nil
+}
+
+func newMigration(v int64, src string) *Migration {
+	return &Migration{v, -1, -1, src}
 }
 
 func versionFilter(v, current, target int64) bool {
