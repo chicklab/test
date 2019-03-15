@@ -1,4 +1,4 @@
-package migration
+package eioh
 
 import (
 	"bufio"
@@ -16,11 +16,12 @@ import (
 	"strconv"
 
 	_ "github.com/go-sql-driver/mysql"
+	"github.com/olekukonko/tablewriter"
 )
 
 //マイグレーション+スラック通知
 
-const sqlCmdPrefix = "-- +goose "
+const sqlCmdPrefix = "-- +eioh "
 
 // Checks the line to see if the line has a statement-ending semicolon
 // or if the line contains a double-dash comment.
@@ -68,27 +69,27 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 
 		line := scanner.Text()
 
-		// handle any goose-specific commands
+		// handle any eioh-specific commands
 		if strings.HasPrefix(line, sqlCmdPrefix) {
 			cmd := strings.TrimSpace(line[len(sqlCmdPrefix):])
 			switch cmd {
-			case "Up":
+			case "up":
 				directionIsActive = (direction == true)
 				upSections++
 				break
 
-			case "Down":
+			case "down":
 				directionIsActive = (direction == false)
 				downSections++
 				break
 
-			case "StatementBegin":
+			case "statementbegin":
 				if directionIsActive {
 					ignoreSemicolons = true
 				}
 				break
 
-			case "StatementEnd":
+			case "statementend":
 				if directionIsActive {
 					statementEnded = (ignoreSemicolons == true)
 					ignoreSemicolons = false
@@ -121,7 +122,7 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 
 	// diagnose likely migration script errors
 	if ignoreSemicolons {
-		log.Println("WARNING: saw '-- +goose StatementBegin' with no matching '-- +goose StatementEnd'")
+		log.Println("WARNING: saw '-- +eioh statementbegin' with no matching '-- +eioh statementend'")
 	}
 
 	if bufferRemaining := strings.TrimSpace(buf.String()); len(bufferRemaining) > 0 {
@@ -130,7 +131,7 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 
 	if upSections == 0 && downSections == 0 {
 		log.Fatalf(`ERROR: no Up/Down annotations found, so no statements were executed.
-			See https://bitbucket.org/liamstask/goose/overview for details.`)
+			See https://bitbucket.org/liamstask/eioh/overview for details.`)
 	}
 
 	return
@@ -154,26 +155,26 @@ func RunMigrationsOnDb(conf *DBConf, migrationsDir string, target int64, db *sql
 	if err != nil {
 		return err
 	}
-	fmt.Println(current)
+	// fmt.Println(current)
 
 	migrations, err := CollectMigrations(migrationsDir, current, target)
-	fmt.Println(current);
-	fmt.Println(err);
+	// fmt.Println(current);
+	// fmt.Println(err);
 	if err != nil {
 		return err
 	}
 
 
 	if len(migrations) == 0 {
-		fmt.Printf("goose: no migrations to run. current version: %d\n", current)
+		fmt.Printf("eioh: no migrations to run. current version: %d\n", current)
 		return nil
 	}
 
 	// ms := migrationSorter(migrations)
-	direction := false
+	direction := true
 	// ms.Sort(direction)
 	ms := migrations
-	fmt.Printf("goose: migrating db environment '%v', current version: %d, target: %d\n",
+	fmt.Printf("eioh: migrating db environment '%v', current version: %d, target: %d\n",
 		conf.Env, current, target)
 
 	for _, m := range ms {
@@ -399,8 +400,106 @@ func EnsureDBVersion(conf *DBConf, db *sql.DB) (int64, error) {
 	panic("failure in EnsureDBVersion()")
 }
 
-// Create the goose_db_version table
-// and insert the initial 0 value into it
+
+type Test struct {
+    Status      string
+    MigrationId string
+}
+
+
+// DBステータス表示
+func showDBStatus(conf *DBConf, db *sql.DB) error {
+
+	rows, err := conf.Driver.Base.dbVersionQuery(db)
+	if err != nil {
+		if err == ErrTableDoesNotExist {
+			return createVersionTable(conf, db)
+		}
+		return err
+	}
+	defer rows.Close()
+
+	// The most recent record for each migration specifies
+	// whether it has been applied or rolled back.
+	// The first version we find that has been applied is the current version.
+
+	// toSkip := make([]int64, 0)
+
+	// fmt.Println(statusPrefix)
+
+	// t := make([]Test, 0)
+	data := make([]Test, 0)
+	// data := 
+	
+
+
+	for rows.Next() {
+		var row MigrationRecord
+		if err = rows.Scan(&row.VersionId, &row.IsApplied); err != nil {
+			log.Fatal("error scanning rows:", err)
+		}
+		// fmt.Println(r""ow.IsApplied, row.VersionId)
+		t := Test{ "a", "b" }
+		fmt.Println(t)
+		// fmt.Println(t)
+		data = append(data, t)
+
+		// have we already marked this version to be skipped?
+		// skip := false
+		// for _, v := range toSkip {
+		// 	if v == row.VersionId {
+		// 		skip = true
+		// 		break
+		// 	}
+		// }
+
+		// if skip {
+		// 	continue
+		// }
+
+		// // if version has been applied we're done
+		// if row.IsApplied {
+		// 	return row.VersionId, nil
+		// }
+
+		// // latest version of migration has not been applied.
+		// toSkip = append(toSkip, row.VersionId)
+	}
+
+	table := tablewriter.NewWriter(os.Stdout)
+	table.SetHeader([]Test{"Status", "MigrationId"})
+	
+	for _, v := range data {
+		table.Append(v)
+	}
+	table.Render() // Send output
+
+	return nil
+	// panic("failure in showDBStatus()")
+}
+
+
+
+// DBバージョンステータス一覧表示
+func StatusMigration(conf *DBConf) (err error) {
+
+	db, err := OpenDBFromDBConf(conf)
+
+	if err != nil {
+		return err
+	}
+	defer db.Close()
+
+	err = showDBStatus(conf, db)
+	if err != nil {
+		return err
+	}
+
+	return nil
+}
+
+
+// DBバージョン保持テーブル作成
 func createVersionTable(conf *DBConf, db *sql.DB) error {
 	txn, err := db.Begin()
 	if err != nil {
@@ -423,6 +522,8 @@ func createVersionTable(conf *DBConf, db *sql.DB) error {
 
 	return txn.Commit()
 }
+
+
 
 // DBバージョン取得
 func GetDBVersion(conf *DBConf) (version int64, err error) {
@@ -476,63 +577,64 @@ func GetDBVersion(conf *DBConf) (version int64, err error) {
 // 	return
 // }
 
-// // helper to identify the most recent possible version
-// // within a folder of migration scripts
-// func GetMostRecentDBVersion(dirpath string) (version int64, err error) {
+// 直近のDBバージョンをファイルベースで取得
+func GetMostRecentDBVersion(dirpath string) (version int64, err error) {
 
-// 	version = -1
+	version = -1
 
-// 	filepath.Walk(dirpath, func(name string, info os.FileInfo, walkerr error) error {
-// 		if walkerr != nil {
-// 			return walkerr
-// 		}
+	filepath.Walk(dirpath, func(name string, info os.FileInfo, walkerr error) error {
+		if walkerr != nil {
+			return walkerr
+		}
 
-// 		if !info.IsDir() {
-// 			if v, e := NumericComponent(name); e == nil {
-// 				if v > version {
-// 					version = v
-// 				}
-// 			}
-// 		}
+		if !info.IsDir() {
+			if v, e := NumericComponent(name); e == nil {
+				if v > version {
+					version = v
+				}
+			}
+		}
 
-// 		return nil
-// 	})
+		return nil
+	})
 
-// 	if version == -1 {
-// 		err = errors.New("no valid version found")
-// 	}
+	if version == -1 {
+		err = errors.New("no valid version found")
+	}
 
-// 	return
-// }
+	return
+}
 
-// func CreateMigration(name, migrationType, dir string, t time.Time) (path string, err error) {
 
-// 	if migrationType != "go" && migrationType != "sql" {
-// 		return "", errors.New("migration type must be 'go' or 'sql'")
-// 	}
 
-// 	timestamp := t.Format("20060102150405")
-// 	filename := fmt.Sprintf("%v_%v.%v", timestamp, name, migrationType)
 
-// 	fpath := filepath.Join(dir, filename)
+// 初期ファイル作成
+func CreateMigration(name, dir string, t time.Time) (path string, err error) {
 
-// 	var tmpl *template.Template
-// 	if migrationType == "sql" {
-// 		tmpl = sqlMigrationTemplate
-// 	} else {
-// 		tmpl = goMigrationTemplate
-// 	}
+	timestamp := t.Format("20060102150405")
+	filename := fmt.Sprintf("%v_%v.sql", timestamp, name)
 
-// 	path, err = writeTemplateToFile(fpath, tmpl, timestamp)
+	fpath := filepath.Join(dir, filename)
 
-// 	return
-// }
+	var tmpl *template.Template
+	tmpl = sqlMigrationTemplate
+
+	path, err = writeTemplateToFile(fpath, tmpl, timestamp)
+
+	return
+}
+
+
+
+
+
+
 
 // Update the version table for the given migration,
 // and finalize the transaction.
 func FinalizeMigration(conf *DBConf, txn *sql.Tx, direction bool, v int64) error {
 
-	// XXX: drop goose_db_version table on some minimum version number?
+	// XXX: drop eioh_db_version table on some minimum version number?
 	stmt := conf.Driver.Base.insertVersionSql()
 	if _, err := txn.Exec(stmt, v, direction); err != nil {
 		txn.Rollback()
@@ -543,12 +645,14 @@ func FinalizeMigration(conf *DBConf, txn *sql.Tx, direction bool, v int64) error
 }
 
 
+
+
 var sqlMigrationTemplate = template.Must(template.New(".sql-migration").Parse(`
--- +goose Up
--- SQL in section 'Up' is executed when this migration is applied
+-- +eioh Up
+-- SQL in section 'up' is executed when this migration is applied
 
 
--- +goose Down
--- SQL section 'Down' is executed when this migration is rolled back
+-- +eioh Down
+-- SQL section 'down' is executed when this migration is rolled back
 
 `))

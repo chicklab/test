@@ -1,4 +1,4 @@
-package migration
+package eioh
 
 import (
 	"database/sql"

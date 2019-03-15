@@ -1,4 +1,4 @@
-package migration
+package eioh
 
 import (
 	"database/sql"
@@ -54,7 +54,6 @@ func NewDBConf(p, env string) (*DBConf, error) {
 	// if base, err := f.Get(fmt.Sprintf("%s.base", env)); err == nil {
 	// 	d.Base = baseByName(base)
 	// }
-
 	return &DBConf{
 		MigrationsDir: filepath.Join(p, "migrations"),
 		Env:           env,

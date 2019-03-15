@@ -1,4 +1,4 @@
--- +goose Up
+-- +eioh Up
 
 CREATE TABLE db_version2 (
                 ID serial NOT NULL,
@@ -8,6 +8,6 @@ CREATE TABLE db_version2 (
                 PRIMARY KEY(id)
             );
 
--- +goose Down
+-- +eioh Down
 
 DROP TABLE db_version2;
