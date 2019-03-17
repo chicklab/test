@@ -1,6 +1,8 @@
--- +eioh Up
 
-CREATE TABLE db_version3 (
+-- +eioh up
+-- SQL in section 'up' is executed when this migration is applied
+
+CREATE TABLE db_version4 (
                 ID serial NOT NULL,
                 VERSION bigint NOT NULL,
                 APPLIED boolean NOT NULL,
@@ -8,6 +10,7 @@ CREATE TABLE db_version3 (
                 PRIMARY KEY(id)
             );
 
--- +eioh Down
+-- +eioh down
+-- SQL section 'down' is executed when this migration is rolled back
 
-DROP TABLE db_version3;
+DROP TABLE db_version4;

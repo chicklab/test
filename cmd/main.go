@@ -31,8 +31,8 @@ func dbConfFromFlags() (dbconf *eioh.DBConf, err error) {
 
 var commands = []*Command{
 	upCmd,
-	// downCmd,
-	// redoCmd,
+	downCmd,
+	redoCmd,
 	statusCmd,
 	createCmd,
 	// dbVersionCmd,

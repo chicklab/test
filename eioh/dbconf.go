@@ -7,13 +7,11 @@ import (
 	"fmt"
 
 	"github.com/kylelemons/go-gypsy/yaml"
-	_ "github.com/go-sql-driver/mysql"
 )
 
 type DBDriver struct {
 	Name    string
 	OpenStr string
-	// Import  string
 	Base SqlBase
 }
 
@@ -71,9 +69,7 @@ func newDBDriver(name, open string) DBDriver {
 	switch name {
 
 	case "mysql":
-		// d.Import = "github.com/go-sql-driver/mysql"
 		d.Base = &MySqlBase{}
-
 	}
 	return d
 }

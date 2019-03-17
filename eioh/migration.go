@@ -14,6 +14,7 @@ import (
 	"fmt"
 	"errors"
 	"strconv"
+	"sort"
 
 	_ "github.com/go-sql-driver/mysql"
 	"github.com/olekukonko/tablewriter"
@@ -22,6 +23,13 @@ import (
 //マイグレーション+スラック通知
 
 const sqlCmdPrefix = "-- +eioh "
+
+type migrationSorter []*Migration
+
+// helpers so we can use pkg sort
+func (ms migrationSorter) Len() int           { return len(ms) }
+func (ms migrationSorter) Swap(i, j int)      { ms[i], ms[j] = ms[j], ms[i] }
+func (ms migrationSorter) Less(i, j int) bool { return ms[i].Version < ms[j].Version }
 
 // Checks the line to see if the line has a statement-ending semicolon
 // or if the line contains a double-dash comment.
@@ -68,7 +76,6 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 	for scanner.Scan() {
 
 		line := scanner.Text()
-
 		// handle any eioh-specific commands
 		if strings.HasPrefix(line, sqlCmdPrefix) {
 			cmd := strings.TrimSpace(line[len(sqlCmdPrefix):])
@@ -130,7 +137,7 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 	}
 
 	if upSections == 0 && downSections == 0 {
-		log.Fatalf(`ERROR: no Up/Down annotations found, so no statements were executed.
+		log.Fatalf(`ERROR: no up/down annotations found, so no statements were executed.
 			See https://bitbucket.org/liamstask/eioh/overview for details.`)
 	}
 
@@ -152,28 +159,29 @@ func RunMigrations(conf *DBConf, migrationsDir string, target int64) error {
 // Runs migration on a specific database instance.
 func RunMigrationsOnDb(conf *DBConf, migrationsDir string, target int64, db *sql.DB) (err error) {
 	current, err := EnsureDBVersion(conf, db)
+
 	if err != nil {
 		return err
 	}
-	// fmt.Println(current)
+	fmt.Println(current)
 
 	migrations, err := CollectMigrations(migrationsDir, current, target)
-	// fmt.Println(current);
+	
 	// fmt.Println(err);
 	if err != nil {
 		return err
 	}
-
+	fmt.Println(migrations);
 
 	if len(migrations) == 0 {
 		fmt.Printf("eioh: no migrations to run. current version: %d\n", current)
 		return nil
 	}
 
-	// ms := migrationSorter(migrations)
-	direction := true
-	// ms.Sort(direction)
-	ms := migrations
+	ms := migrationSorter(migrations)
+	direction := current < target
+	ms.Sort(direction)
+
 	fmt.Printf("eioh: migrating db environment '%v', current version: %d, target: %d\n",
 		conf.Env, current, target)
 
@@ -211,7 +219,10 @@ func runSQLMigration(conf *DBConf, db *sql.DB, scriptFile string, v int64, direc
 	// Commits the transaction if successfully applied each statement and
 	// records the version into the version table or returns an error and
 	// rolls back the transaction.
+	fmt.Println(direction)
+
 	for _, query := range splitSQLStatements(f, direction) {
+		fmt.Println(query)
 		if _, err = txn.Exec(query); err != nil {
 			txn.Rollback()
 			log.Fatalf("FAIL %s (%v), quitting migration.", filepath.Base(scriptFile), err)
@@ -293,51 +304,27 @@ func versionFilter(v, current, target int64) bool {
 	return false
 }
 
-// func (ms migrationSorter) Sort(direction bool) {
+func (ms migrationSorter) Sort(direction bool) {
 
-// 	// sort ascending or descending by version
-// 	if direction {
-// 		sort.Sort(ms)
-// 	} else {
-// 		sort.Sort(sort.Reverse(ms))
-// 	}
+	// sort ascending or descending by version
+	if direction {
+		sort.Sort(ms)
+	} else {
+		sort.Sort(sort.Reverse(ms))
+	}
 
-// 	// now that we're sorted in the appropriate direction,
-// 	// populate next and previous for each migration
-// 	for i, m := range ms {
-// 		prev := int64(-1)
-// 		if i > 0 {
-// 			prev = ms[i-1].Version
-// 			ms[i-1].Next = m.Version
-// 		}
-// 		ms[i].Previous = prev
-// 	}
-// }
+	// now that we're sorted in the appropriate direction,
+	// populate next and previous for each migration
+	for i, m := range ms {
+		prev := int64(-1)
+		if i > 0 {
+			prev = ms[i-1].Version
+			ms[i-1].Next = m.Version
+		}
+		ms[i].Previous = prev
+	}
+}
 
-// look for migration scripts with names in the form:
-//  XXX_descriptivename.ext
-// where XXX specifies the version number
-// and ext specifies the type of migration
-// func NumericComponent(name string) (int64, error) {
-
-// 	base := filepath.Base(name)
-
-// 	if ext := filepath.Ext(base); ext != ".go" && ext != ".sql" {
-// 		return 0, errors.New("not a recognized migration file type")
-// 	}
-
-// 	idx := strings.Index(base, "_")
-// 	if idx < 0 {
-// 		return 0, errors.New("no separator found")
-// 	}
-
-// 	n, e := strconv.ParseInt(base[:idx], 10, 64)
-// 	if e == nil && n <= 0 {
-// 		return 0, errors.New("migration IDs must be greater than zero")
-// 	}
-
-// 	return n, e
-// }
 type MigrationRecord struct {
 	VersionId int64
 	TStamp    time.Time
@@ -401,10 +388,10 @@ func EnsureDBVersion(conf *DBConf, db *sql.DB) (int64, error) {
 }
 
 
-type Test struct {
-    Status      string
-    MigrationId string
-}
+// type Test struct {
+//     Status      string
+//     MigrationId string
+// }
 
 
 // DBステータス表示
@@ -419,55 +406,20 @@ func showDBStatus(conf *DBConf, db *sql.DB) error {
 	}
 	defer rows.Close()
 
-	// The most recent record for each migration specifies
-	// whether it has been applied or rolled back.
-	// The first version we find that has been applied is the current version.
-
-	// toSkip := make([]int64, 0)
-
-	// fmt.Println(statusPrefix)
-
-	// t := make([]Test, 0)
-	data := make([]Test, 0)
-	// data := 
-	
-
+	data := make([][]string, 0)
 
 	for rows.Next() {
 		var row MigrationRecord
 		if err = rows.Scan(&row.VersionId, &row.IsApplied); err != nil {
 			log.Fatal("error scanning rows:", err)
 		}
-		// fmt.Println(r""ow.IsApplied, row.VersionId)
-		t := Test{ "a", "b" }
-		fmt.Println(t)
-		// fmt.Println(t)
-		data = append(data, t)
+		a := strconv.FormatBool(row.IsApplied)
+		b := strconv.FormatInt(row.VersionId, 10)
 
-		// have we already marked this version to be skipped?
-		// skip := false
-		// for _, v := range toSkip {
-		// 	if v == row.VersionId {
-		// 		skip = true
-		// 		break
-		// 	}
-		// }
-
-		// if skip {
-		// 	continue
-		// }
-
-		// // if version has been applied we're done
-		// if row.IsApplied {
-		// 	return row.VersionId, nil
-		// }
-
-		// // latest version of migration has not been applied.
-		// toSkip = append(toSkip, row.VersionId)
+		data = append(data, []string{ a, b })
 	}
-
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]Test{"Status", "MigrationId"})
+	table.SetHeader([]string{"Status", "MigrationId"})
 	
 	for _, v := range data {
 		table.Append(v)
@@ -542,40 +494,37 @@ func GetDBVersion(conf *DBConf) (version int64, err error) {
 	return version, nil
 }
 
-// func GetPreviousDBVersion(dirpath string, version int64) (previous int64, err error) {
+func GetPreviousDBVersion(dirpath string, version int64) (previous int64, err error) {
 
-// 	previous = -1
-// 	sawGivenVersion := false
+	previous = -1
+	sawGivenVersion := false
 
-// 	filepath.Walk(dirpath, func(name string, info os.FileInfo, walkerr error) error {
+	filepath.Walk(dirpath, func(name string, info os.FileInfo, walkerr error) error {
 
-// 		if !info.IsDir() {
-// 			if v, e := NumericComponent(name); e == nil {
-// 				if v > previous && v < version {
-// 					previous = v
-// 				}
-// 				if v == version {
-// 					sawGivenVersion = true
-// 				}
-// 			}
-// 		}
+		if !info.IsDir() {
+			if v, e := NumericComponent(name); e == nil {
+				if v > previous && v < version {
+					previous = v
+				}
+				if v == version {
+					sawGivenVersion = true
+				}
+			}
+		}
 
-// 		return nil
-// 	})
+		return nil
+	})
 
-// 	if previous == -1 {
-// 		if sawGivenVersion {
-// 			// the given version is (likely) valid but we didn't find
-// 			// anything before it.
-// 			// 'previous' must reflect that no migrations have been applied.
-// 			previous = 0
-// 		} else {
-// 			err = ErrNoPreviousVersion
-// 		}
-// 	}
+	if previous == -1 {
+		if sawGivenVersion {
+			previous = 0
+		} else {
+			err = ErrNoPreviousVersion
+		}
+	}
 
-// 	return
-// }
+	return
+}
 
 // 直近のDBバージョンをファイルベースで取得
 func GetMostRecentDBVersion(dirpath string) (version int64, err error) {
@@ -648,11 +597,11 @@ func FinalizeMigration(conf *DBConf, txn *sql.Tx, direction bool, v int64) error
 
 
 var sqlMigrationTemplate = template.Must(template.New(".sql-migration").Parse(`
--- +eioh Up
+-- +eioh up
 -- SQL in section 'up' is executed when this migration is applied
 
 
--- +eioh Down
+-- +eioh down
 -- SQL section 'down' is executed when this migration is rolled back
 
 `))
