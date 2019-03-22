@@ -6,6 +6,7 @@ import (
 	"os"
 	"strings"
 	"../eioh"
+	"../notification"
 	"text/template"
 
 	// "log"
@@ -65,8 +66,10 @@ func main() {
 	}
 
 	cmd.Exec(args[1:])
+	
 
-	// notification.slack()
+	// notification.Push(name)
+
 
 
 	// conf, err := eioh.NewDBConf("./", "development")
@@ -97,7 +100,7 @@ func main() {
 
 
 func usage() {
-	// fmt.Print(usagePrefix)
+	fmt.Print(usagePrefix)
 	// flag.PrintDefaults()
 	// usageTmpl.Execute(os.Stdout, commands)
 }

@@ -17,7 +17,7 @@ type Command struct {
 
 func (c *Command) Exec(args []string) {
 	c.Flag.Usage = func() {
-		// helpFunc(c, c.Name)
+		helpFunc(c, c.Name)
 	}
 	c.Flag.Parse(args)
 	c.Run(c, c.Flag.Args()...)

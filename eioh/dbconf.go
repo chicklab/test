@@ -23,7 +23,7 @@ type DBConf struct {
 
 func NewDBConf(p, env string) (*DBConf, error) {
 
-	cfgFile := filepath.Join(p, "dbconf.yml")
+	cfgFile := filepath.Join(p, "conf.yml")
 
 	f, err := yaml.ReadFile(cfgFile)
 	if err != nil {

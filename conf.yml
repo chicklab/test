@@ -1,0 +1,7 @@
+
+development:
+    driver: mysql
+    open: root:password@tcp(172.17.0.3:3306)/enjin?parseTime=true
+
+notification:
+    url: https://hooks.slack.com/services/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

@@ -3,22 +3,25 @@ package notification
 import (
 	"fmt"
 	"bytes"
-	"net/http"
-
+    "net/http"
+	"path/filepath"
+    "github.com/kylelemons/go-gypsy/yaml"
 	// "log"
 )
 
 
-func slack() {
+func Push(text string) {
+
+    conf, err := NewNotifiactionConf("../")
+
     name := "Go"
-    text := "Hello from go"
     channel := "random"
 
     jsonStr := `{"channel":"` + channel + `","username":"` + name + `","text":"` + text + `"}`
 
     req, err := http.NewRequest(
         "POST",
-        "https://hooks.slack.com/services/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",
+        conf.Url,
         bytes.NewBuffer([]byte(jsonStr)),
     )
 
@@ -36,4 +39,32 @@ func slack() {
 
     // fmt.Print(resp)
     defer resp.Body.Close()
+}
+
+
+type NotificationConf struct {
+	Url string
+	Env string
+}
+
+func NewNotifiactionConf(p string) (*NotificationConf, error) {
+
+    env := "notification"
+
+	cfgFile := filepath.Join(p, "conf.yml")
+
+	f, err := yaml.ReadFile(cfgFile)
+	if err != nil {
+		return nil, err
+	}
+
+	url, err := f.Get(fmt.Sprintf("%s.url", env))
+	if err != nil {
+		return nil, err
+	}
+
+	return &NotificationConf{
+        Url: url,
+		Env: env,
+	}, nil
 }

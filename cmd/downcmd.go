@@ -20,6 +20,7 @@ func downRun(cmd *Command, args ...string) {
 	// if err != nil {
 	// 	log.Fatal(err)
 	// }
+	
 	conf, err := eioh.NewDBConf("../", "development")
 	if err != nil {
 		// log.Fatal(err)
@@ -29,6 +30,7 @@ func downRun(cmd *Command, args ...string) {
 	if err != nil {
 		log.Fatal(err)
 	}
+	
 
 	previous, err := eioh.GetPreviousDBVersion(conf.MigrationsDir, current)
 	if err != nil {

@@ -15,8 +15,6 @@ var upCmd = &Command{
 
 func upRun(cmd *Command, args ...string) {
 
-	// fmt.Println(cmd)
-	// conf, err := dbConfFromFlags()
 	conf, err := eioh.NewDBConf("../", "development")
 	if err != nil {
 		// log.Fatal(err)

@@ -26,13 +26,11 @@ const sqlCmdPrefix = "-- +eioh "
 
 type migrationSorter []*Migration
 
-// helpers so we can use pkg sort
+
 func (ms migrationSorter) Len() int           { return len(ms) }
 func (ms migrationSorter) Swap(i, j int)      { ms[i], ms[j] = ms[j], ms[i] }
 func (ms migrationSorter) Less(i, j int) bool { return ms[i].Version < ms[j].Version }
 
-// Checks the line to see if the line has a statement-ending semicolon
-// or if the line contains a double-dash comment.
 func endsWithSemicolon(line string) bool {
 
 	prev := ""
@@ -50,22 +48,11 @@ func endsWithSemicolon(line string) bool {
 	return strings.HasSuffix(prev, ";")
 }
 
-// Split the given sql script into individual statements.
-//
-// The base case is to simply split on semicolons, as these
-// naturally terminate a statement.
-//
-// However, more complex cases like pl/pgsql can have semicolons
-// within a statement. For these cases, we provide the explicit annotations
-// 'StatementBegin' and 'StatementEnd' to allow the script to
-// tell us to ignore semicolons.
 func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 
 	var buf bytes.Buffer
 	scanner := bufio.NewScanner(r)
 
-	// track the count of each section
-	// so we can diagnose scripts with no annotations
 	upSections := 0
 	downSections := 0
 
@@ -76,7 +63,6 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 	for scanner.Scan() {
 
 		line := scanner.Text()
-		// handle any eioh-specific commands
 		if strings.HasPrefix(line, sqlCmdPrefix) {
 			cmd := strings.TrimSpace(line[len(sqlCmdPrefix):])
 			switch cmd {
@@ -113,9 +99,6 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 			log.Fatalf("io err: %v", err)
 		}
 
-		// Wrap up the two supported cases: 1) basic with semicolon; 2) psql statement
-		// Lines that end with semicolon that are in a statement block
-		// do not conclude statement.
 		if (!ignoreSemicolons && endsWithSemicolon(line)) || statementEnded {
 			statementEnded = false
 			stmts = append(stmts, buf.String())
@@ -127,7 +110,6 @@ func splitSQLStatements(r io.Reader, direction bool) (stmts []string) {
 		log.Fatalf("scanning migration: %v", err)
 	}
 
-	// diagnose likely migration script errors
 	if ignoreSemicolons {
 		log.Println("WARNING: saw '-- +eioh statementbegin' with no matching '-- +eioh statementend'")
 	}
@@ -156,18 +138,18 @@ func RunMigrations(conf *DBConf, migrationsDir string, target int64) error {
 	return RunMigrationsOnDb(conf, migrationsDir, target, db)
 }
 
-// Runs migration on a specific database instance.
 func RunMigrationsOnDb(conf *DBConf, migrationsDir string, target int64, db *sql.DB) (err error) {
+
 	current, err := EnsureDBVersion(conf, db)
 
 	if err != nil {
 		return err
 	}
-	fmt.Println(current)
+
 
 	migrations, err := CollectMigrations(migrationsDir, current, target)
 	
-	// fmt.Println(err);
+
 	if err != nil {
 		return err
 	}
@@ -214,13 +196,6 @@ func runSQLMigration(conf *DBConf, db *sql.DB, scriptFile string, v int64, direc
 		log.Fatal(err)
 	}
 
-	// find each statement, checking annotations for up/down direction
-	// and execute each of them in the current transaction.
-	// Commits the transaction if successfully applied each statement and
-	// records the version into the version table or returns an error and
-	// rolls back the transaction.
-	fmt.Println(direction)
-
 	for _, query := range splitSQLStatements(f, direction) {
 		fmt.Println(query)
 		if _, err = txn.Exec(query); err != nil {
@@ -254,11 +229,6 @@ func NumericComponent(name string) (int64, error) {
 	if e == nil && n <= 0 {
 		return 0, errors.New("IDは0以上を使用してください。")
 	}
-
-	// n, err := time.Parse(RFC3339, n)
-    // if err == nil {
-    //     return 0, errors.New("日付形式で入力してください。")
-    // }
 
 	return n, e
 }
@@ -306,15 +276,12 @@ func versionFilter(v, current, target int64) bool {
 
 func (ms migrationSorter) Sort(direction bool) {
 
-	// sort ascending or descending by version
 	if direction {
 		sort.Sort(ms)
 	} else {
 		sort.Sort(sort.Reverse(ms))
 	}
 
-	// now that we're sorted in the appropriate direction,
-	// populate next and previous for each migration
 	for i, m := range ms {
 		prev := int64(-1)
 		if i > 0 {
@@ -327,18 +294,17 @@ func (ms migrationSorter) Sort(direction bool) {
 
 type MigrationRecord struct {
 	VersionId int64
-	TStamp    time.Time
-	IsApplied bool // was this a result of up() or down()
+	CreateDate time.Time
+	Status bool
 }
 
 type Migration struct {
 	Version  int64
-	Next     int64  // next version, or -1 if none
-	Previous int64  // previous version, -1 if none
-	Source   string // path to .go or .sql script
+	Next     int64
+	Previous int64
+	Source   string
 }
-// retrieve the current version for this DB.
-// Create and initialize the DB version table if it doesn't exist.
+
 func EnsureDBVersion(conf *DBConf, db *sql.DB) (int64, error) {
 
 	rows, err := conf.Driver.Base.dbVersionQuery(db)
@@ -349,20 +315,17 @@ func EnsureDBVersion(conf *DBConf, db *sql.DB) (int64, error) {
 		return 0, err
 	}
 	defer rows.Close()
-
-	// The most recent record for each migration specifies
-	// whether it has been applied or rolled back.
-	// The first version we find that has been applied is the current version.
+	
 
 	toSkip := make([]int64, 0)
 
 	for rows.Next() {
+		
 		var row MigrationRecord
-		if err = rows.Scan(&row.VersionId, &row.IsApplied); err != nil {
+		if err = rows.Scan(&row.VersionId, &row.Status, &row.CreateDate); err != nil {
 			log.Fatal("error scanning rows:", err)
 		}
 
-		// have we already marked this version to be skipped?
 		skip := false
 		for _, v := range toSkip {
 			if v == row.VersionId {
@@ -375,64 +338,66 @@ func EnsureDBVersion(conf *DBConf, db *sql.DB) (int64, error) {
 			continue
 		}
 
-		// if version has been applied we're done
-		if row.IsApplied {
+		if row.Status {
 			return row.VersionId, nil
 		}
-
-		// latest version of migration has not been applied.
 		toSkip = append(toSkip, row.VersionId)
 	}
 
-	panic("failure in EnsureDBVersion()")
+	return 0, err
 }
 
-
-// type Test struct {
-//     Status      string
-//     MigrationId string
-// }
-
-
-// DBステータス表示
 func showDBStatus(conf *DBConf, db *sql.DB) error {
 
 	rows, err := conf.Driver.Base.dbVersionQuery(db)
 	if err != nil {
-		if err == ErrTableDoesNotExist {
-			return createVersionTable(conf, db)
+		if err != ErrTableDoesNotExist {
+			return err
 		}
-		return err
+		if err = createVersionTable(conf, db); err != nil {
+			return err
+		}
+		if rows, err = conf.Driver.Base.dbVersionQuery(db); err != nil {
+			return err
+		}
 	}
 	defer rows.Close()
 
 	data := make([][]string, 0)
+	count := 0
 
 	for rows.Next() {
 		var row MigrationRecord
-		if err = rows.Scan(&row.VersionId, &row.IsApplied); err != nil {
+		if err = rows.Scan(&row.VersionId, &row.Status, &row.CreateDate); err != nil {
 			log.Fatal("error scanning rows:", err)
 		}
-		a := strconv.FormatBool(row.IsApplied)
+		// a := strconv.FormatBool(row.Status)
+		a := "up"
+		if !row.Status {
+			a = "down"
+		}
 		b := strconv.FormatInt(row.VersionId, 10)
+		c := row.CreateDate
 
-		data = append(data, []string{ a, b })
+		data = append(data, []string{a, b, c.String()})
+		count++
 	}
+
+	if count == 0 {
+		log.Fatal("no valid version found")
+		return nil
+	}
+
 	table := tablewriter.NewWriter(os.Stdout)
-	table.SetHeader([]string{"Status", "MigrationId"})
-	
+	table.SetHeader([]string{"Status", "MigrationId", "CreateDate"})
 	for _, v := range data {
 		table.Append(v)
 	}
-	table.Render() // Send output
+	table.Render()
 
 	return nil
-	// panic("failure in showDBStatus()")
 }
 
-
-
-// DBバージョンステータス一覧表示
 func StatusMigration(conf *DBConf) (err error) {
 
 	db, err := OpenDBFromDBConf(conf)
@@ -450,8 +415,6 @@ func StatusMigration(conf *DBConf) (err error) {
 	return nil
 }
 
-
-// DBバージョン保持テーブル作成
 func createVersionTable(conf *DBConf, db *sql.DB) error {
 	txn, err := db.Begin()
 	if err != nil {
@@ -465,19 +428,10 @@ func createVersionTable(conf *DBConf, db *sql.DB) error {
 		return err
 	}
 
-	version := 0
-	applied := true
-	if _, err := txn.Exec(d.insertVersionSql(), version, applied); err != nil {
-		txn.Rollback()
-		return err
-	}
-
 	return txn.Commit()
 }
 
 
-
-// DBバージョン取得
 func GetDBVersion(conf *DBConf) (version int64, err error) {
 
 	db, err := OpenDBFromDBConf(conf)
@@ -526,7 +480,6 @@ func GetPreviousDBVersion(dirpath string, version int64) (previous int64, err er
 	return
 }
 
-// 直近のDBバージョンをファイルベースで取得
 func GetMostRecentDBVersion(dirpath string) (version int64, err error) {
 
 	version = -1
@@ -543,7 +496,6 @@ func GetMostRecentDBVersion(dirpath string) (version int64, err error) {
 				}
 			}
 		}
-
 		return nil
 	})
 
@@ -554,10 +506,6 @@ func GetMostRecentDBVersion(dirpath string) (version int64, err error) {
 	return
 }
 
-
-
-
-// 初期ファイル作成
 func CreateMigration(name, dir string, t time.Time) (path string, err error) {
 
 	timestamp := t.Format("20060102150405")
@@ -573,17 +521,8 @@ func CreateMigration(name, dir string, t time.Time) (path string, err error) {
 	return
 }
 
-
-
-
-
-
-
-// Update the version table for the given migration,
-// and finalize the transaction.
 func FinalizeMigration(conf *DBConf, txn *sql.Tx, direction bool, v int64) error {
 
-	// XXX: drop eioh_db_version table on some minimum version number?
 	stmt := conf.Driver.Base.insertVersionSql()
 	if _, err := txn.Exec(stmt, v, direction); err != nil {
 		txn.Rollback()
@@ -592,9 +531,6 @@ func FinalizeMigration(conf *DBConf, txn *sql.Tx, direction bool, v int64) error
 
 	return txn.Commit()
 }
-
-
-
 
 var sqlMigrationTemplate = template.Must(template.New(".sql-migration").Parse(`
 -- +eioh up
